@@ -29,6 +29,7 @@ This is the codebase for the **GR00T Whole-Body Control (WBC)** projects. It hos
 
 ## News
 
+- **[2026-03-24]** Update the C++ inference stack: motor error monitoring and temperature reporting (with TTS alerts and MuJoCo heatmap visualization); support streamed token input via ZMQ protocol v4; idle-mode error-based readaptation; TRT engine output now co-located with ONNX model; **ZMQ header size changed to 1280 bytes**
 - **[2026-03-16]** [BONES-SEED](https://huggingface.co/datasets/bones-studio/seed) is now open-sourced! A large-scale human motion dataset (142K+ motions, ~288 hours) with Unitree G1 MuJoCo-compatible trajectories (a large subset of SONIC training data!).
 - **[2026-02-19]** Released GEAR-SONIC with pretrained policy checkpoints, C++ inference stack, VR teleoperation stack, and documentation.
 - **[2025-11-12]** Initial release of GR00T-WholeBodyControl with Decoupled WBC for GR00T N1.5 and N1.6.

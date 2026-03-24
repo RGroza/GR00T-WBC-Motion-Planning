@@ -43,7 +43,7 @@ From `gear_sonic_deploy/`:
 ```bash
 cd gear_sonic_deploy
 source scripts/setup_env.sh
-./deploy.sh sim --input-type zmq_manager
+./deploy.sh --input-type zmq_manager sim
 # Wait until you see "Init done"
 ```
 
@@ -275,7 +275,7 @@ source scripts/setup_env.sh
 # 'real' auto-detects the robot network interface (192.168.123.x).
 # If auto-detection fails, pass the G1's IP directly:
 #   ./deploy.sh --input-type zmq_manager <G1-IP>
-./deploy.sh real --input-type zmq_manager
+./deploy.sh --input-type zmq_manager real
 
 # Wait until you see "Init done"
 ```
