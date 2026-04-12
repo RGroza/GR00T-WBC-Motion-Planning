@@ -352,6 +352,15 @@ setup_x11() {
 X11_ENABLED=false
 setup_x11 && X11_ENABLED=true
 
+# Detect whether the host X display is already backed by NVIDIA OpenGL.
+# If it is, PRIME offload env vars are unnecessary and can break GLX for some
+# apps (MuJoCo/GLFW), especially on non-:0 displays.
+host_display_is_nvidia() {
+    [ -n "$DISPLAY" ] || return 1
+    command -v glxinfo >/dev/null 2>&1 || return 1
+    glxinfo -B 2>/dev/null | grep -qi '^OpenGL vendor string: *NVIDIA'
+}
+
 # Mount entire /dev directory for dynamic device access (including hidraw for joycon)
 # This allows JoyCon controllers to be detected even when connected after container launch
 sudo chmod g+r+w /dev/input/*
@@ -367,9 +376,14 @@ HAS_NVIDIA_GPU=$(lspci | grep -i "vga\|3d\|display" | grep -i nvidia | wc -l)
 
 if [[ "$HAS_INTEL_GPU" -gt 0 ]] || [[ "$HAS_AMD_GPU" -gt 0 ]] && [[ "$HAS_NVIDIA_GPU" -gt 0 ]]; then
     echo "Detected hybrid GPU setup (Intel/AMD integrated + NVIDIA discrete)"
-    echo "Setting NVIDIA Optimus environment variables for proper rendering offload..."
-    GPU_ENV_VARS="-e __NV_PRIME_RENDER_OFFLOAD=1 \
+    if host_display_is_nvidia; then
+        echo "Host DISPLAY=$DISPLAY already uses NVIDIA OpenGL; not enabling PRIME offload vars."
+        GPU_ENV_VARS=""
+    else
+        echo "Setting NVIDIA Optimus environment variables for rendering offload..."
+        GPU_ENV_VARS="-e __NV_PRIME_RENDER_OFFLOAD=1 \
     -e __VK_LAYER_NV_optimus=NVIDIA_only"
+    fi
 else
     GPU_ENV_VARS=""
 fi
@@ -397,6 +411,8 @@ DOCKER_RUN_ARGS="--hostname $HOSTNAME \
     -e NVIDIA_VISIBLE_DEVICES=all \
     -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
     -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    -e LIBGL_ALWAYS_INDIRECT=0 \
+    -e MUJOCO_GL=glfw \
     -e USERNAME=$USERNAME \
     -e DECOUPLED_WBC_DIR="$DOCKER_HOME_DIR/Projects/$WORKTREE_NAME" \
     -e PYTHONPATH="$DOCKER_HOME_DIR/Projects/$WORKTREE_NAME" \
@@ -405,7 +421,7 @@ DOCKER_RUN_ARGS="--hostname $HOSTNAME \
     -v $HOME/.ssh:$DOCKER_HOME_DIR/.ssh \
     -v $HOME/.gear:$DOCKER_HOME_DIR/.gear \
     -v $HOME/.Xauthority:$DOCKER_HOME_DIR/.Xauthority \
-    -v $PROJECT_DIR:$DOCKER_HOME_DIR/Projects/$(basename "$PROJECT_DIR")
+    -v $PROJECT_DIR:$DOCKER_HOME_DIR/Projects/$(basename "$PROJECT_DIR") \
     --device /dev/snd \
     --group-add audio \
     -e PULSE_SERVER=unix:/run/user/$(id -u)/pulse/native \
