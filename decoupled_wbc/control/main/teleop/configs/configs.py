@@ -314,6 +314,9 @@ class SyncSimDataCollectionConfig(ControlLoopConfig, TeleopConfig):
     hand_control_device: Optional[str] = "dummy"
     """Device to use for hand control. Options: None, manus, joycon, iphone."""
 
+    motion_planning: bool = False
+    """Whether to use motion planning for action generation instead of teleop commands."""
+
     remove_existing_dir: bool = False
     """Whether to remove existing output directory if it exists."""
 
@@ -481,3 +484,6 @@ class DeploymentConfig(BaseConfig, ComposedCameraClientConfig):
 
     image_publish: bool = False
     """Enable image publishing in simulation loop (passed to run_sim_loop.py)"""
+
+    motion_planning: bool = False
+    """Use motion planning policy instead of teleop for autonomous manipulation."""

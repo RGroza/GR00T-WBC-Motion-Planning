@@ -249,12 +249,51 @@ class G1Deployment:
         print("Controls: 'i' for initial pose, ']' to activate locomotion")
 
     def start_policy(self):
-        """Start either teleop or inference policy based on configuration"""
+        """Start either teleop, motion planning, or inference policy based on configuration"""
         if not self.config.enable_upper_body_operation:
             print("Upper body operation disabled in config.")
             return
 
-        self.start_teleop()
+        if self.config.motion_planning:
+            self.start_motion_planning()
+        else:
+            self.start_teleop()
+
+    def start_motion_planning(self):
+        """Start the motion planning policy"""
+        print("Starting motion planning policy...")
+        cmd = [
+            sys.executable,
+            str(self.project_root / "control/main/teleop/run_motion_policy_loop.py"),
+            "--robot",
+            "g1",
+            "--teleop_frequency",
+            str(self.config.teleop_frequency),
+        ]
+
+        # Handle boolean flags using tyro syntax
+        if self.config.enable_waist:
+            cmd.append("--enable_waist")
+        else:
+            cmd.append("--no-enable_waist")
+
+        if self.config.high_elbow_pose:
+            cmd.append("--high_elbow_pose")
+        else:
+            cmd.append("--no-high_elbow_pose")
+
+        if self.config.enable_visualization:
+            cmd.append("--enable_visualization")
+        else:
+            cmd.append("--no-enable_visualization")
+
+        if not self._run_in_tmux("motion_planning", cmd, pane_index=2):
+            print("ERROR: Motion planning policy failed to start!")
+            print("Continuing without motion planning...")
+        else:
+            print("Motion planning policy started successfully.")
+            print("Press 'l' in the control loop terminal to activate motion planning.")
+            print("Note: Motion planning requires privileged observations (e.g., bottle_pos) from simulation.")
 
     def start_teleop(self):
         """Start the teleoperation policy"""
@@ -359,7 +398,7 @@ class G1Deployment:
         print(f"  Robot IP: {self.config.robot_ip}")
         print(f"  WBC Version: {self.config.wbc_version}")
         print(f"  Interface: {self.config.interface}")
-        print(f"  Policy Mode: {self.config.upper_body_operation_mode}")
+        print(f"  Policy Mode: {'Motion Planning' if self.config.motion_planning else self.config.upper_body_operation_mode}")
         print(f"  With Hands: {self.config.with_hands}")
         print(f"  View Camera: {self.config.view_camera}")
         print(f"  Enable Waist: {self.config.enable_waist}")
