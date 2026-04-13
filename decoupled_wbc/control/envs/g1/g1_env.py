@@ -181,8 +181,11 @@ class G1Env(HumanoidEnv):
             "torso_ang_vel": body_obs["torso_ang_vel"],
         }
 
-        if self.use_sim and self.sim:
-            obs.update(self.sim.get_privileged_obs())
+        # Add privileged observations from body_obs (received via DDS in sim mode)
+        if "obj_pos" in body_obs:
+            obs["obj_pos"] = body_obs["obj_pos"]
+        if "obj_quat" in body_obs:
+            obs["obj_quat"] = body_obs["obj_quat"]
 
         # Store last observation for safety checking
         self.last_obs = obs

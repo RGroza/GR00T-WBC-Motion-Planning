@@ -29,7 +29,7 @@ class G1Body(Env):
         torso_quat = body_state[0, 141:145]
         torso_ang_vel = body_state[0, 145:148]
 
-        return {
+        obs = {
             "body_q": body_q,
             "body_dq": body_dq,
             "body_ddq": body_ddq,
@@ -40,6 +40,13 @@ class G1Body(Env):
             "torso_quat": torso_quat,
             "torso_ang_vel": torso_ang_vel,
         }
+        
+        # Add privileged observations if available (sim only)
+        privileged_obs = self.body_state_processor.get_privileged_obs()
+        if privileged_obs:
+            obs.update(privileged_obs)
+        
+        return obs
 
     def queue_action(self, action: dict[str, any]):
         # action should contain body_q, body_dq, body_tau

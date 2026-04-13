@@ -7,7 +7,7 @@ LOCO_MANIP_TASK_STATUS_TOPIC = "LocoManipPolicy/task_status"
 LOCO_NAV_TASK_STATUS_TOPIC = "NavigationPolicy/task_status"
 LOWER_BODY_POLICY_STATUS_TOPIC = "ControlPolicy/lower_body_policy_status"
 JOINT_SAFETY_STATUS_TOPIC = "ControlPolicy/joint_safety_status"
-
+# Note: Privileged observations (obj_pos, obj_quat) now published via DDS channel "rt/privileged_obs"
 
 DEFAULT_NAV_CMD = [0.0, 0.0, 0.0]
 DEFAULT_BASE_HEIGHT = 0.74

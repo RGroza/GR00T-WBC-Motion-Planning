@@ -51,6 +51,11 @@ class BodyStateProcessor:
             if self.config["ENV_TYPE"] == "sim":
                 self.odo_state_subscriber = ChannelSubscriber("rt/odostate", OdoState_)
                 self.odo_state_subscriber.Init(None, 0)
+                
+                # Subscribe to privileged observations (obj_pos, obj_quat)
+                self.privileged_obs_subscriber = ChannelSubscriber("rt/privileged_obs", OdoState_)
+                self.privileged_obs_subscriber.Init(None, 0)
+                print("Initialized privileged obs subscriber on: rt/privileged_obs")
         else:
             raise NotImplementedError(f"Robot type {self.config['ROBOT_TYPE']} is not supported")
 
@@ -68,6 +73,20 @@ class BodyStateProcessor:
         self.robot_low_state = None
         self.secondary_imu_state = None
         self.odo_state = None
+        self.privileged_obs = None
+
+    def get_privileged_obs(self) -> dict:
+        """Read privileged observations from DDS channel (obj_pos, obj_quat)."""
+        if self.config["ENV_TYPE"] != "sim":
+            return {}
+        
+        privileged_obs_state = self.privileged_obs_subscriber.Read()
+        if privileged_obs_state:
+            return {
+                "obj_pos": np.array(privileged_obs_state.position),
+                "obj_quat": np.array(privileged_obs_state.orientation),
+            }
+        return {}
 
     def _prepare_low_state(self) -> np.ndarray:
         self.robot_low_state = self.robot_lowstate_subscriber.Read()

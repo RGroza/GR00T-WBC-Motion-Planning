@@ -50,8 +50,19 @@ class RoboCasaG1EnvServer(RoboCasaEnvServer):
         self.channel_bridge = UnitreeSdk2Bridge(config=self.wbc_config)
 
     def publish_obs(self):
-        # with self.cache_lock:
-        obs = self.caches["obs"]
+        # Publish observations via Unitree SDK2 DDS
+        # Get privileged obs (obj_pos, obj_quat) and merge into observations
+        with self.cache_lock:
+            obs = self.caches["obs"].copy()  # Copy to avoid modifying cached obs
+        
+        # Merge privileged observations before publishing
+        privileged_obs = self.get_privileged_obs()
+        if privileged_obs:
+            obs.update(privileged_obs)
+
+        # print(f"Publishing obs with keys: {list(obs.keys())}")
+
+        # PublishLowState will publish privileged obs via DDS channel "rt/privileged_obs"
         self.channel_bridge.PublishLowState(obs)
 
     def get_action(self) -> Tuple[Dict[str, Any], bool, bool]:

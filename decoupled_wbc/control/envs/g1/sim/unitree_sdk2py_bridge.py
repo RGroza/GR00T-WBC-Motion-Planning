@@ -94,6 +94,14 @@ class UnitreeSdk2Bridge:
         self.right_hand_state_puber = ChannelPublisher("rt/dex3/right/state", HandState_)
         self.right_hand_state_puber.Init()
 
+        # Create a simple struct-like publisher for privileged observations
+        # We'll just publish obj_pos (3 floats) and obj_quat (4 floats) as a simple array
+        # Using OdoState as a convenient container since it has position + orientation
+        self.privileged_obs_state = OdoState_default()
+        self.privileged_obs_puber = ChannelPublisher("rt/privileged_obs", OdoState_)
+        self.privileged_obs_puber.Init()
+        print("Initialized privileged obs publisher on: rt/privileged_obs")
+
         self.low_cmd_suber = ChannelSubscriber("rt/lowcmd", LowCmd_)
         self.low_cmd_suber.Init(self.LowCmdHandler, 1)
 
@@ -225,6 +233,15 @@ class UnitreeSdk2Bridge:
             self.right_hand_state.motor_state[i].q = obs["right_hand_q"][i]
             self.right_hand_state.motor_state[i].dq = obs["right_hand_dq"][i]
         self.right_hand_state_puber.Write(self.right_hand_state)
+
+        # Publish privileged observations if available (obj_pos, obj_quat)
+        # Reuse OdoState message: position = obj_pos, orientation = obj_quat
+        if "obj_pos" in obs and "obj_quat" in obs:
+            self.privileged_obs_state.position[:] = obs["obj_pos"]
+            self.privileged_obs_state.orientation[:] = obs["obj_quat"]
+            self.privileged_obs_state.tick = int(obs["time"] * 1e3)
+            self.privileged_obs_puber.Write(self.privileged_obs_state)
+            # print(f"Published privileged obs: obj_pos={obs['obj_pos']}, obj_quat={obs['obj_quat']}")
 
     def GetAction(self) -> Tuple[np.ndarray, bool, bool]:
         with self.low_cmd_lock:

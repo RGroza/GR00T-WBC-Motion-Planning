@@ -4,7 +4,7 @@ import numpy as np
 import rclpy
 import tyro
 
-from decoupled_wbc.control.main.constants import CONTROL_GOAL_TOPIC
+from decoupled_wbc.control.main.constants import CONTROL_GOAL_TOPIC, STATE_TOPIC_NAME
 from decoupled_wbc.control.main.teleop.configs.configs import TeleopConfig
 from decoupled_wbc.control.policy.motion_planning_policy import MotionPlanningPolicy
 from decoupled_wbc.control.robot_model.instantiation.g1 import instantiate_g1_robot_model
@@ -12,7 +12,7 @@ from decoupled_wbc.control.teleop.solver.hand.instantiation.g1_hand_ik_instantia
     instantiate_g1_hand_ik_solver,
 )
 from decoupled_wbc.control.teleop.teleop_retargeting_ik import TeleopRetargetingIK
-from decoupled_wbc.control.utils.ros_utils import ROSManager, ROSMsgPublisher
+from decoupled_wbc.control.utils.ros_utils import ROSManager, ROSMsgPublisher, ROSMsgSubscriber
 from decoupled_wbc.control.utils.telemetry import Telemetry
 
 MOTION_PLANNING_NODE_NAME = "MotionPlanningPolicy"
@@ -68,10 +68,14 @@ def main(config: TeleopConfig):
     print("Motion planning policy initialized!")
     print("Press 'l' to activate/deactivate the policy")
     print("Press 'k' to reset the policy")
-    print("Note: The policy requires 'bottle_pos' in observations (from privileged obs)")
 
-    # Create a publisher for the navigation commands
+    # Create subscribers and publishers
+    state_subscriber = ROSMsgSubscriber(STATE_TOPIC_NAME)
     control_publisher = ROSMsgPublisher(CONTROL_GOAL_TOPIC)
+    
+    print(f"Subscribing to state topic: {STATE_TOPIC_NAME}")
+    print(f"Publishing control commands to: {CONTROL_GOAL_TOPIC}")
+    print(f"Note: Privileged obs (obj_pos, obj_quat) flow via DDS (rt/privileged_obs)")
 
     # Create rate controller
     rate = node.create_rate(config.teleop_frequency)
@@ -84,6 +88,17 @@ def main(config: TeleopConfig):
         while rclpy.ok():
             with telemetry.timer("total_loop"):
                 t_start = time.monotonic()
+                
+                # Get latest observation from the state topic
+                # Privileged observations (obj_pos, obj_quat) are included via DDS
+                with telemetry.timer("get_observation"):
+                    state_msg = state_subscriber.get_msg()
+                    if state_msg:
+                        # Update the motion planning policy with latest observations
+                        motion_policy.set_observation(state_msg)
+                    else:
+                        if iteration == 0:
+                            print("Waiting for state observations...")
                 
                 # Get the current motion planning action
                 with telemetry.timer("get_action"):

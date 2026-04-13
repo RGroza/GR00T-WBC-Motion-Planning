@@ -29,7 +29,7 @@ class MotionPlanningPolicy(Policy):
         robot_model: RobotModel,
         retargeting_ik: TeleopRetargetingIK,
         trajectory_duration: float = 3.0,
-        grasp_offset: np.ndarray = np.array([0.0, 0.0, 0.1]),  # Offset above object for grasping
+        grasp_offset: np.ndarray = np.array([0.0, 0.0, 0.15]),  # Offset above object for grasping
         wait_for_activation: int = 5,
         activate_keyboard_listener: bool = True,
     ):
@@ -67,11 +67,60 @@ class MotionPlanningPolicy(Policy):
         # Current observation
         self.observation: Optional[Dict[str, Any]] = None
 
-        # Latest wrist and finger data
-        self.latest_left_wrist_data = np.eye(4)
-        self.latest_right_wrist_data = np.eye(4)
-        self.latest_left_fingers_data = {"position": np.zeros((25, 4, 4))}
-        self.latest_right_fingers_data = {"position": np.zeros((25, 4, 4))}
+        # Calibrate initial wrist poses from robot model
+        self._calibrate_initial_wrist_poses()
+
+        # Latest wrist and finger data (initialized with calibrated poses)
+        self.latest_left_wrist_data = self.initial_left_wrist_pose.copy()
+        self.latest_right_wrist_data = self.initial_right_wrist_pose.copy()
+        self.latest_left_fingers_data = {"position": np.ones((25, 4, 4))}
+        self.latest_right_fingers_data = {"position": np.ones((25, 4, 4))}
+
+        # Initial wrist orientations
+        self.initial_left_wrist_rot = R.from_matrix(self.initial_left_wrist_pose[:3, :3])
+        self.initial_right_wrist_rot = R.from_matrix(self.initial_right_wrist_pose[:3, :3])
+
+    def _calibrate_initial_wrist_poses(self):
+        """
+        Calibrate initial wrist poses from the robot model's initial configuration.
+        
+        This ensures the wrists start from a known position based on the robot's
+        default pose, rather than at the origin [0,0,0].
+        """
+        # Use the robot model's initial body pose to compute wrist positions
+        q_initial = self.robot_model.initial_body_pose.copy()
+        
+        # Compute forward kinematics for the initial configuration
+        self.robot_model.cache_forward_kinematics(q_initial)
+        
+        # Get wrist frame names
+        if self.robot_model.supplemental_info is None:
+            left_wrist_name = "left_wrist_yaw_link"
+            right_wrist_name = "right_wrist_yaw_link"
+        else:
+            left_wrist_name = self.robot_model.supplemental_info.hand_frame_names["left"]
+            right_wrist_name = self.robot_model.supplemental_info.hand_frame_names["right"]
+        
+        # Get initial wrist placements
+        left_wrist_placement = self.robot_model.frame_placement(left_wrist_name)
+        right_wrist_placement = self.robot_model.frame_placement(right_wrist_name)
+        
+        # Convert SE3 placements to 4x4 matrices
+        self.initial_left_wrist_pose = np.eye(4)
+        self.initial_left_wrist_pose[:3, :3] = left_wrist_placement.rotation
+        self.initial_left_wrist_pose[:3, 3] = left_wrist_placement.translation
+        
+        self.initial_right_wrist_pose = np.eye(4)
+        self.initial_right_wrist_pose[:3, :3] = right_wrist_placement.rotation
+        self.initial_right_wrist_pose[:3, 3] = right_wrist_placement.translation
+        
+        # Reset forward kinematics back to zero configuration
+        self.robot_model.reset_forward_kinematics()
+        
+        print(f"Calibrated initial wrist poses:")
+        print(f"  Left wrist position: {self.initial_left_wrist_pose[:3, 3]}")
+        print(f"  Right wrist position: {self.initial_right_wrist_pose[:3, 3]}")
+
 
     def set_observation(self, observation: Dict[str, Any]):
         """Update the current environment observation."""
@@ -83,10 +132,10 @@ class MotionPlanningPolicy(Policy):
         
         Args:
             goal: Dictionary containing task specification
-                - "task": task type (e.g., "pick_bottle", "place_object")
+                - "task": task type (e.g., "pick_object", "place_object")
                 - "target_object": name of target object (optional)
         """
-        # For now, we automatically target the bottle in the scene
+        # For now, we automatically target the object in the scene
         # Future: support multiple task types and objects
         pass
 
@@ -101,8 +150,11 @@ class MotionPlanningPolicy(Policy):
             4x4 transformation matrix
         """
         if self.observation is None or "q" not in self.observation:
-            # Return neutral pose if no observation available
-            return np.eye(4)
+            # Return calibrated initial pose if no observation available
+            if side == "left":
+                return self.initial_left_wrist_pose.copy()
+            else:
+                return self.initial_right_wrist_pose.copy()
         
         q = self.observation["q"]
         self.robot_model.cache_forward_kinematics(q)
@@ -122,24 +174,6 @@ class MotionPlanningPolicy(Policy):
         wrist_matrix[:3, 3] = wrist_placement.translation
         
         return wrist_matrix
-
-    def _get_bottle_position(self) -> Optional[np.ndarray]:
-        """
-        Extract bottle position from privileged observations.
-        
-        Returns:
-            3D position vector [x, y, z] or None if not available
-        """
-        if self.observation is None:
-            return None
-        
-        print(f"Current observation keys: {list(self.observation.keys())}")
-
-        # Check for bottle_pos in privileged observations
-        if "bottle_pos" in self.observation:
-            return np.array(self.observation["bottle_pos"])
-        
-        return None
 
     def _compute_trajectory_point(self, t: float) -> np.ndarray:
         """
@@ -242,7 +276,7 @@ class MotionPlanningPolicy(Policy):
         else:
             left_wrist_name = self.robot_model.supplemental_info.hand_frame_names["left"]
             right_wrist_name = self.robot_model.supplemental_info.hand_frame_names["right"]
-        
+
         body_data = {
             left_wrist_name: left_wrist_matrix,
             right_wrist_name: right_wrist_matrix,
@@ -274,35 +308,51 @@ class MotionPlanningPolicy(Policy):
 
     def _initialize_trajectory(self):
         """Initialize a new trajectory to the bottle."""
+        if self.observation is None:
+            print("Failed to initialize trajectory: No observation available")
+            return
+
         self.trajectory_start_time = time_module.monotonic()
-        
+
         # Get current right wrist pose
         self.start_wrist_pose = self._get_current_wrist_pose(side="right")
         self.latest_left_wrist_data = self._get_current_wrist_pose(side="left")
+
+        # Get object position from observation
+        if "obj_pos" not in self.observation:
+            print("Failed to initialize trajectory: 'obj_pos' not in observation")
+            return
         
-        # Get bottle position from observation
-        bottle_pos = self._get_bottle_position()
-        
-        if bottle_pos is None:
-            print("Warning: Bottle position not available in observation!")
-            # Use a default target in front of the robot
-            bottle_pos = np.array([0.5, 0.0, 0.8])
-        
-        # Compute target wrist pose (bottle position + grasp offset)
-        target_pos = bottle_pos + self.grasp_offset
-        
-        # Keep orientation pointing down for grasping (can be improved)
-        # Quaternion for pointing down: rotate 180° around Y axis
-        target_quat = R.from_euler('y', np.pi).as_matrix()
-        
+        obj_pos_world = np.array(self.observation["obj_pos"])
+
+        # Get robot base link pose from observation
+        base_pose = self.observation.get("floating_base_pose", None)
+
+        # Transform obj_pos in the robot base frame if base_pose is available
+        obj_pos_robot = None
+        if base_pose is not None:
+            base_pos = np.array(base_pose[:3])
+            base_quat = np.array(base_pose[3:7])  # [w, x, y, z] format
+            base_rot = R.from_quat(base_quat, scalar_first=True)  # Tell scipy it's [w, x, y, z]
+            obj_pos_robot = base_rot.inv().apply(obj_pos_world - base_pos)
+
+        if obj_pos_robot is None:
+            print("Failed to initialize trajectory: Object position not available in robot frame")
+            return
+
+        # Compute target wrist pose (object position + grasp offset)
+        target_pos = obj_pos_robot + self.grasp_offset
+
         self.target_wrist_pose = np.eye(4)
-        self.target_wrist_pose[:3, :3] = target_quat
+        self.target_wrist_pose[:3, :3] = self.initial_right_wrist_rot.as_matrix() # Keep initial orientation
         self.target_wrist_pose[:3, 3] = target_pos
-        
+
         print(f"Initialized trajectory:")
         print(f"  Start position: {self.start_wrist_pose[:3, 3]}")
+        print(f"  Robot base pose: {base_pose}")
+        print(f"  Object position (world): {obj_pos_world}")
+        print(f"  Object position (robot): {obj_pos_robot}")
         print(f"  Target position: {target_pos}")
-        print(f"  Bottle position: {bottle_pos}")
         print(f"  Duration: {self.trajectory_duration}s")
 
     def _matrix_to_pose(self, matrix: np.ndarray) -> np.ndarray:
@@ -405,10 +455,11 @@ class MotionPlanningPolicy(Policy):
         self.target_wrist_pose = None
         self.target_bottle_pos = None
         
-        self.latest_left_wrist_data = np.eye(4)
-        self.latest_right_wrist_data = np.eye(4)
-        self.latest_left_fingers_data = {"position": np.zeros((25, 4, 4))}
-        self.latest_right_fingers_data = {"position": np.zeros((25, 4, 4))}
+        # Reset to calibrated initial wrist poses
+        self.latest_left_wrist_data = self.initial_left_wrist_pose.copy()
+        self.latest_right_wrist_data = self.initial_right_wrist_pose.copy()
+        self.latest_left_fingers_data = {"position": np.ones((25, 4, 4))}
+        self.latest_right_fingers_data = {"position": np.ones((25, 4, 4))}
 
         if auto_activate:
             self.activate_policy(wait_for_activation)

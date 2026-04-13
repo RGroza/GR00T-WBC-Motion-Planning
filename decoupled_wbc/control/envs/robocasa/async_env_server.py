@@ -79,6 +79,8 @@ class RoboCasaEnvServer:
 
         self.reset()
 
+        self.obs_iter_idx = 0
+
     @property
     def base_env(self):
         return self.env.env
@@ -279,6 +281,8 @@ class RoboCasaEnvServer:
             if hasattr(self.base_env, "get_privileged_obs_keys"):
                 for key in self.base_env.get_privileged_obs_keys():
                     obs[key] = self.caches["obs"][key]
+                # if self.obs_iter_idx % 50 == 0:
+                #     print(f"Privileged obs keys: {list(obs.keys())}")
 
             for key in self.caches["obs"].keys():
                 if key.endswith("_image"):
