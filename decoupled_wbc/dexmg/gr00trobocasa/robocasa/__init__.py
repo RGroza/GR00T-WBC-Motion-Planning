@@ -1,11 +1,13 @@
 from robocasa.environments.locomanipulation.base import (
     PnPBottle,
     PickBottleShelf,
+    PnPBottleObservable,
     PnPBottleHigh,
     NavPickBottle,
     PnPBottleRandRobotPose,
     VisualReach,
     PnPBottleFixtureToFixture,
+    PnPBottleFixtureObservable,
     PnPBottleFixtureToFixtureSourceDemo,
     PnPBottleShelfToTable,
     PnPBottleTableToTable,

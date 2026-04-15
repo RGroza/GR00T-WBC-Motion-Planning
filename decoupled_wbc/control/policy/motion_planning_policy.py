@@ -75,6 +75,13 @@ class MotionPlanningPolicy(Policy):
         self.latest_right_wrist_data = self.initial_right_wrist_pose.copy()
         self.latest_left_fingers_data = {"position": np.ones((25, 4, 4))}
         self.latest_right_fingers_data = {"position": np.ones((25, 4, 4))}
+        
+        # Store current hand joint positions to keep fingers at current state
+        # Initialize with robot model's initial hand positions (from initial_body_pose)
+        left_hand_indices = self.robot_model.get_hand_actuated_joint_indices(side="left")
+        right_hand_indices = self.robot_model.get_hand_actuated_joint_indices(side="right")
+        self.current_left_hand_q = self.robot_model.initial_body_pose[left_hand_indices].copy()
+        self.current_right_hand_q = self.robot_model.initial_body_pose[right_hand_indices].copy()
 
         # Initial wrist orientations
         self.initial_left_wrist_rot = R.from_matrix(self.initial_left_wrist_pose[:3, :3])
@@ -125,6 +132,12 @@ class MotionPlanningPolicy(Policy):
     def set_observation(self, observation: Dict[str, Any]):
         """Update the current environment observation."""
         self.observation = observation
+        
+        # Store current hand positions to keep fingers at their current state
+        if "left_hand_q" in observation:
+            self.current_left_hand_q = observation["left_hand_q"].copy()
+        if "right_hand_q" in observation:
+            self.current_right_hand_q = observation["right_hand_q"].copy()
 
     def set_goal(self, goal: Dict[str, Any]):
         """
@@ -262,8 +275,8 @@ class MotionPlanningPolicy(Policy):
             # Keep left wrist at current position (not used for grasping)
             left_wrist_matrix = self.latest_left_wrist_data
             
-            if t >= 1.0:
-                print(f"Trajectory complete! Right wrist reached target.")
+            # if t >= 1.0:
+            #     print(f"Trajectory complete! Right wrist reached target.")
 
         # Convert matrices to pose format (position + quaternion)
         left_wrist_pose = self._matrix_to_pose(left_wrist_matrix)
@@ -303,6 +316,21 @@ class MotionPlanningPolicy(Policy):
         # Run retargeting IK to get joint targets
         self.retargeting_ik.set_goal(ik_data)
         action["target_upper_body_pose"] = self.retargeting_ik.get_action()
+        
+        # Override hand joint positions with current hand state to keep fingers open
+        # Get the full configuration from the IK solver
+        full_q = self.retargeting_ik._most_recent_q.copy()
+        
+        # Update hand joints with stored positions
+        left_hand_indices = self.robot_model.get_hand_actuated_joint_indices(side="left")
+        full_q[left_hand_indices] = self.current_left_hand_q
+        
+        right_hand_indices = self.robot_model.get_hand_actuated_joint_indices(side="right")
+        full_q[right_hand_indices] = self.current_right_hand_q
+        
+        # Extract upper body joints from the modified configuration
+        upper_body_indices = self.robot_model.get_joint_group_indices("upper_body")
+        action["target_upper_body_pose"] = full_q[upper_body_indices]
 
         return action
 
@@ -460,6 +488,12 @@ class MotionPlanningPolicy(Policy):
         self.latest_right_wrist_data = self.initial_right_wrist_pose.copy()
         self.latest_left_fingers_data = {"position": np.ones((25, 4, 4))}
         self.latest_right_fingers_data = {"position": np.ones((25, 4, 4))}
+        
+        # Reset stored hand positions to initial configuration (will be updated from observation)
+        left_hand_indices = self.robot_model.get_hand_actuated_joint_indices(side="left")
+        right_hand_indices = self.robot_model.get_hand_actuated_joint_indices(side="right")
+        self.current_left_hand_q = self.robot_model.initial_body_pose[left_hand_indices].copy()
+        self.current_right_hand_q = self.robot_model.initial_body_pose[right_hand_indices].copy()
 
         if auto_activate:
             self.activate_policy(wait_for_activation)

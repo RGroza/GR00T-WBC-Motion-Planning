@@ -59,10 +59,10 @@ def main(config: TeleopConfig):
     motion_policy = MotionPlanningPolicy(
         robot_model=robot_model,
         retargeting_ik=retargeting_ik,
-        trajectory_duration=3.0,  # 3 seconds to reach target
-        grasp_offset=np.array([0.0, 0.0, 0.1]),  # 10cm above object center
-        wait_for_activation=5,  # 5 second countdown
-        activate_keyboard_listener=True,  # Enable keyboard control (press 'l' to activate)
+        trajectory_duration=3.0,
+        grasp_offset=np.array([-0.05, -0.02, 0.1]),
+        wait_for_activation=0,
+        activate_keyboard_listener=True,
     )
     
     print("Motion planning policy initialized!")

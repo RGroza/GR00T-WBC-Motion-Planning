@@ -826,14 +826,7 @@ class PickBottleShelf(PnPBottle):
             RobotPoseRandomizer.set_arm(self, elbow_qpos=-0.5, shoulder_pitch_qpos=0.5)
 
 
-class PnPBottleHigh(PnPBottle):
-    def _load_model(self):
-        self.mujoco_objects = [self._create_table("table_body", [0.5, 0, 0.1], [0, 0, np.pi / 2])]
-
-        LocoManipulationEnv._load_model(self)
-
-        self.bottle = self._create_bottle()
-
+class PnPBottleObservable(PnPBottle):
     def _reset_internal(self):
         """
         Resets simulation internal configurations.
@@ -843,7 +836,7 @@ class PnPBottleHigh(PnPBottle):
         # Randomize bottle position within +/- 0.1 range on x and y axes
         if not self.deterministic_reset:
             # Base position of the bottle
-            base_pos = np.array([0.4, 0, 0.875])
+            base_pos = np.array([0.3, 0, 0.77])
 
             # Add random offset within +/- 0.1 range for x and y
             random_x = np.random.uniform(-0.1, 0.1)
@@ -897,6 +890,15 @@ class PnPBottleHigh(PnPBottle):
             "obj_linear_vel": (3,),
             "obj_angular_vel": (3,),
         }
+
+
+class PnPBottleHigh(PnPBottleObservable):
+    def _load_model(self):
+        self.mujoco_objects = [self._create_table("table_body", [0.5, 0, 0.1], [0, 0, np.pi / 2])]
+
+        LocoManipulationEnv._load_model(self)
+
+        self.bottle = self._create_bottle()
 
 
 class NavPickBottle(PnPBottle):
@@ -1217,6 +1219,52 @@ class PnPBottleFixtureToFixture(PnPBottle):
             apply_noise_during_interpolation=False,
         )
         return task.to_dict()
+
+
+class PnPBottleFixtureObservable(PnPBottleFixtureToFixture):
+    def _setup_observables(self):
+        observables = super()._setup_observables()
+
+        @sensor(modality="object")
+        def obj_pos(obs_cache):
+            return self.sim.data.body_xpos[self.obj_body_id["bottle"]]
+
+        @sensor(modality="object")
+        def obj_quat(obs_cache):
+            return self.sim.data.body_xquat[self.obj_body_id["bottle"]]
+
+        @sensor(modality="object")
+        def obj_linear_vel(obs_cache):
+            return self.sim.data.get_body_xvelp("bottle_body")
+
+        @sensor(modality="object")
+        def obj_angular_vel(obs_cache):
+            return self.sim.data.get_body_xvelr("bottle_body")
+
+        @sensor(modality="object")
+        def target_fixture_pos(obs_cache):
+            return self.sim.data.body_xpos[self.tgt_fixture_id]
+
+        sensors = [obj_pos, obj_quat, obj_linear_vel, obj_angular_vel, target_fixture_pos]
+        names = [s.__name__ for s in sensors]
+
+        for name, s in zip(names, sensors):
+            observables[name] = Observable(
+                name=name,
+                sensor=s,
+                sampling_rate=self.control_freq,
+            )
+
+        return observables
+
+    def get_privileged_obs_keys(self):
+        return {
+            "obj_pos": (3,),
+            "obj_quat": (4,),
+            "obj_linear_vel": (3,),
+            "obj_angular_vel": (3,),
+            "target_fixture_pos": (3,),
+        }
 
 
 class PnPBottleFixtureToFixtureSourceDemo(PnPBottleFixtureToFixture):
