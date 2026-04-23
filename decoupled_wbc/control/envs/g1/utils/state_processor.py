@@ -56,6 +56,11 @@ class BodyStateProcessor:
                 self.privileged_obs_subscriber = ChannelSubscriber("rt/privileged_obs", OdoState_)
                 self.privileged_obs_subscriber.Init(None, 0)
                 print("Initialized privileged obs subscriber on: rt/privileged_obs")
+                
+                # Subscribe to target fixture observations (target_fixture_pos)
+                self.target_fixture_obs_subscriber = ChannelSubscriber("rt/target_fixture_obs", OdoState_)
+                self.target_fixture_obs_subscriber.Init(None, 0)
+                print("Initialized target fixture obs subscriber on: rt/target_fixture_obs")
         else:
             raise NotImplementedError(f"Robot type {self.config['ROBOT_TYPE']} is not supported")
 
@@ -74,19 +79,27 @@ class BodyStateProcessor:
         self.secondary_imu_state = None
         self.odo_state = None
         self.privileged_obs = None
+        self.target_fixture_obs = None
 
     def get_privileged_obs(self) -> dict:
-        """Read privileged observations from DDS channel (obj_pos, obj_quat)."""
+        """Read privileged observations from DDS channel (obj_pos, obj_quat, target_fixture_pos)."""
         if self.config["ENV_TYPE"] != "sim":
             return {}
         
+        obs = {}
+        
+        # Read object position and orientation
         privileged_obs_state = self.privileged_obs_subscriber.Read()
         if privileged_obs_state:
-            return {
-                "obj_pos": np.array(privileged_obs_state.position),
-                "obj_quat": np.array(privileged_obs_state.orientation),
-            }
-        return {}
+            obs["obj_pos"] = np.array(privileged_obs_state.position)
+            obs["obj_quat"] = np.array(privileged_obs_state.orientation)
+        
+        # Read target fixture position
+        target_fixture_obs_state = self.target_fixture_obs_subscriber.Read()
+        if target_fixture_obs_state:
+            obs["target_fixture_pos"] = np.array(target_fixture_obs_state.position)
+        
+        return obs
 
     def _prepare_low_state(self) -> np.ndarray:
         self.robot_low_state = self.robot_lowstate_subscriber.Read()

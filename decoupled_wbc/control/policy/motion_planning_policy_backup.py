@@ -39,14 +39,11 @@ class MotionPlanningPolicy(Policy):
         robot_model: RobotModel,
         retargeting_ik: TeleopRetargetingIK,
         trajectory_duration: float = 3.0,
-        grasp_offset: np.ndarray = np.array([-0.1, 0.0, 0.0]),  # Offset for grasping
-        release_offset: np.ndarray = np.array([-0.15, -0.05, 0.02]),  # Offset for releasing
+        grasp_offset: np.ndarray = np.array([0.0, 0.0, 0.15]),  # Offset above object for grasping
         wait_for_activation: int = 5,
         activate_keyboard_listener: bool = True,
-        grasp_duration: float = 0.5,  # Time to close gripper
-        release_duration: float = 0.5,  # Time to open gripper
-        wrist_pitch_offset: float = -0.35,  # Pitch offset in radians (around Y-axis)
-        wrist_z_offset: float = 0.05,  # Z-axis position offset in meters
+        grasp_duration: float = 1.0,  # Time to close gripper
+        release_duration: float = 1.0,  # Time to open gripper
     ):
         """
         Args:
@@ -54,13 +51,10 @@ class MotionPlanningPolicy(Policy):
             retargeting_ik: IK solver for body pose
             trajectory_duration: Time to reach target (seconds)
             grasp_offset: Offset from object center to grasp point (x, y, z in meters)
-            release_offset: Offset from object center to release point (x, y, z in meters)
             wait_for_activation: Seconds to wait before policy activation
             activate_keyboard_listener: Enable keyboard control
             grasp_duration: Time to close gripper (seconds)
             release_duration: Time to open gripper (seconds)
-            wrist_pitch_offset: Pitch rotation offset in radians (positive = pitch down)
-            wrist_z_offset: Z-axis position offset in meters (positive = move up)
         """
         if activate_keyboard_listener:
             from decoupled_wbc.control.utils.keyboard_dispatcher import KeyboardListenerSubscriber
@@ -77,11 +71,8 @@ class MotionPlanningPolicy(Policy):
         # Trajectory parameters
         self.trajectory_duration = trajectory_duration
         self.grasp_offset = grasp_offset
-        self.release_offset = release_offset
         self.grasp_duration = grasp_duration
         self.release_duration = release_duration
-        self.wrist_pitch_offset = wrist_pitch_offset
-        self.wrist_z_offset = wrist_z_offset
         
         # Task state machine
         self.current_stage: TaskStage = TaskStage.APPROACHING_OBJECT
@@ -92,7 +83,7 @@ class MotionPlanningPolicy(Policy):
         self.trajectory_start_time: Optional[float] = None
         self.start_wrist_pose: Optional[np.ndarray] = None
         self.target_wrist_pose: Optional[np.ndarray] = None
-        self.grasp_pos: Optional[np.ndarray] = None
+        self.target_bottle_pos: Optional[np.ndarray] = None
         self.target_fixture_pos: Optional[np.ndarray] = None
         
         # Current observation
@@ -105,6 +96,10 @@ class MotionPlanningPolicy(Policy):
         self.latest_left_wrist_data = self.initial_left_wrist_pose.copy()
         self.latest_right_wrist_data = self.initial_right_wrist_pose.copy()
         self.latest_left_fingers_data = {"position": np.ones((25, 4, 4))}
+        
+        # Store initial (open) gripper positions
+        self.open_gripper_q = self.current_right_hand_q.copy()
+        self.closed_gripper_q = None  # Will be set based on observation or a default value
         self.latest_right_fingers_data = {"position": np.ones((25, 4, 4))}
         
         # Store current hand joint positions to keep fingers at current state
@@ -113,10 +108,6 @@ class MotionPlanningPolicy(Policy):
         right_hand_indices = self.robot_model.get_hand_actuated_joint_indices(side="right")
         self.current_left_hand_q = self.robot_model.initial_body_pose[left_hand_indices].copy()
         self.current_right_hand_q = self.robot_model.initial_body_pose[right_hand_indices].copy()
-        
-        # Store initial (open) gripper positions
-        self.open_gripper_q = self.current_right_hand_q.copy()
-        self.closed_gripper_q = np.array([0.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0])
 
         # Initial wrist orientations
         self.initial_left_wrist_rot = R.from_matrix(self.initial_left_wrist_pose[:3, :3])
@@ -126,12 +117,8 @@ class MotionPlanningPolicy(Policy):
         """
         Calibrate initial wrist poses from the robot model's initial configuration.
         
-        Wrist poses are expressed in the WORLD FRAME. The orientation [0,0,0,1] means
-        identity rotation in the world frame, which makes the wrists aligned with world
-        axes (e.g., pointing along world X/Y/Z axes).
-        
-        Note: If you want wrists oriented relative to the robot's base/pelvis, you would
-        need to transform by the base orientation. Currently using world-frame identity.
+        This ensures the wrists start from a known position based on the robot's
+        default pose, rather than at the origin [0,0,0].
         """
         # Use the robot model's initial body pose to compute wrist positions
         q_initial = self.robot_model.initial_body_pose.copy()
@@ -143,67 +130,44 @@ class MotionPlanningPolicy(Policy):
         if self.robot_model.supplemental_info is None:
             left_wrist_name = "left_wrist_yaw_link"
             right_wrist_name = "right_wrist_yaw_link"
-            root_frame_name = "pelvis"  # Default assumption
         else:
             left_wrist_name = self.robot_model.supplemental_info.hand_frame_names["left"]
             right_wrist_name = self.robot_model.supplemental_info.hand_frame_names["right"]
-            root_frame_name = self.robot_model.supplemental_info.root_frame_name
         
-        # Get initial wrist placements (in world frame)
+        # Get initial wrist placements
         left_wrist_placement = self.robot_model.frame_placement(left_wrist_name)
         right_wrist_placement = self.robot_model.frame_placement(right_wrist_name)
         
-        # Get base/pelvis placement (in world frame)
-        base_placement = self.robot_model.frame_placement(root_frame_name)
-        base_position = base_placement.translation
-        base_rotation_matrix = base_placement.rotation
-        
-        # Convert SE3 placements to 4x4 matrices (in world frame)
-        # Apply pitch offset to identity rotation (pitch around Y-axis)
-        wrist_rotation = R.from_euler('y', self.wrist_pitch_offset).as_matrix()
-        
+        # Convert SE3 placements to 4x4 matrices
         self.initial_left_wrist_pose = np.eye(4)
-        self.initial_left_wrist_pose[:3, :3] = wrist_rotation
+        self.initial_left_wrist_pose[:3, :3] = left_wrist_placement.rotation
         self.initial_left_wrist_pose[:3, 3] = left_wrist_placement.translation
-        self.initial_left_wrist_pose[2, 3] += self.wrist_z_offset  # Apply Z offset
         
         self.initial_right_wrist_pose = np.eye(4)
-        self.initial_right_wrist_pose[:3, :3] = wrist_rotation
+        self.initial_right_wrist_pose[:3, :3] = right_wrist_placement.rotation
         self.initial_right_wrist_pose[:3, 3] = right_wrist_placement.translation
-        self.initial_right_wrist_pose[2, 3] += self.wrist_z_offset  # Apply Z offset
         
         # Reset forward kinematics back to zero configuration
         self.robot_model.reset_forward_kinematics()
         
-        print(f"Calibrated initial wrist poses (in WORLD FRAME):")
-        print(f"  Wrist pitch offset: {np.degrees(self.wrist_pitch_offset):.2f} degrees")
-        print(f"  Wrist Z offset: {self.wrist_z_offset:.3f} meters")
-        print(f"  Base/pelvis position: {base_position}")
-        print(f"  Base/pelvis orientation (quat x,y,z,w): {R.from_matrix(base_rotation_matrix).as_quat()}")
-        print(f"  Base/pelvis orientation (Euler): {R.from_matrix(base_rotation_matrix).as_euler('xyz', degrees=True)}")
+        print(f"Calibrated initial wrist poses:")
         print(f"  Left wrist position: {self.initial_left_wrist_pose[:3, 3]}")
-        print(f"  Left wrist orientation (quat x,y,z,w): {R.from_matrix(self.initial_left_wrist_pose[:3, :3]).as_quat()}")
-        print(f"  Left wrist orientation (as Euler angles): {R.from_matrix(self.initial_left_wrist_pose[:3, :3]).as_euler('xyz', degrees=True)}")
         print(f"  Right wrist position: {self.initial_right_wrist_pose[:3, 3]}")
-        print(f"  Right wrist orientation (quat x,y,z,w): {R.from_matrix(self.initial_right_wrist_pose[:3, :3]).as_quat()}")
-        print(f"  Right wrist orientation (as Euler angles): {R.from_matrix(self.initial_right_wrist_pose[:3, :3]).as_euler('xyz', degrees=True)}")
-        print(f"  Grasp offset: {self.grasp_offset}")
-        print(f"  Release offset: {self.release_offset}")
 
 
     def set_observation(self, observation: Dict[str, Any]):
         """Update the current environment observation."""
         self.observation = observation
         
-        # Store current hand positions to keep fingers at their current state
+        # Store current hand positions to keep fingers at their current st
+            
+        # Check if target fixture is available
+        if "target_fixture_pos" in observation:
+            self.use_target_fixture = Trueate
         if "left_hand_q" in observation:
             self.current_left_hand_q = observation["left_hand_q"].copy()
         if "right_hand_q" in observation:
             self.current_right_hand_q = observation["right_hand_q"].copy()
-            
-        # Check if target fixture is available
-        if "target_fixture_pos" in observation:
-            self.use_target_fixture = True
 
     def set_goal(self, goal: Dict[str, Any]):
         """
@@ -373,7 +337,7 @@ class MotionPlanningPolicy(Policy):
         self.retargeting_ik.set_goal(ik_data)
         action["target_upper_body_pose"] = self.retargeting_ik.get_action()
         
-        # Override hand joint positions with current hand state to keep fingers controlled
+        # Override hand joint positions with current hand state to keep fingers open
         # Get the full configuration from the IK solver
         full_q = self.retargeting_ik._most_recent_q.copy()
         
@@ -391,7 +355,13 @@ class MotionPlanningPolicy(Policy):
         return action
 
     def _initialize_trajectory(self):
-        """Initialize trajectory to object on first activation."""
+        """Initialize a new trajectory to the bottle."""
+        if self.observation is None:
+            print("Failed to initialize trajectory: No observation available")
+            return
+
+        self.trajectory_start_time = time_module.monotonic()
+based on task stage."""
         if self.observation is None:
             print("Failed to initialize trajectory: No observation available")
             return
@@ -402,8 +372,6 @@ class MotionPlanningPolicy(Policy):
         # Get current right wrist pose
         self.start_wrist_pose = self._get_current_wrist_pose(side="right")
         self.latest_left_wrist_data = self._get_current_wrist_pose(side="left")
-
-        print(f"Observation: {self.observation.keys()}")
 
         # Get object position from observation
         if "obj_pos" not in self.observation:
@@ -417,14 +385,10 @@ class MotionPlanningPolicy(Policy):
 
         # Transform obj_pos in the robot base frame if base_pose is available
         obj_pos_robot = None
-        base_rot = None
-        base_pos = None
         if base_pose is not None:
             base_pos = np.array(base_pose[:3])
             base_quat = np.array(base_pose[3:7])  # [w, x, y, z] format
-            # Convert quaternion to scipy format [x, y, z, w]
-            base_quat_xyzw = np.array([base_quat[1], base_quat[2], base_quat[3], base_quat[0]])
-            base_rot = R.from_quat(base_quat_xyzw)
+            base_rot = R.from_quat(base_quat, scalar_first=True)  # Tell scipy it's [w, x, y, z]
             obj_pos_robot = base_rot.inv().apply(obj_pos_world - base_pos)
 
         if obj_pos_robot is None:
@@ -432,11 +396,12 @@ class MotionPlanningPolicy(Policy):
             return
 
         # Compute target wrist pose (object position + grasp offset)
-        self.grasp_pos = obj_pos_robot + self.grasp_offset
+        target_pos = obj_pos_robot + self.grasp_offset
+        self.target_bottle_pos = obj_pos_robot
 
         self.target_wrist_pose = np.eye(4)
-        self.target_wrist_pose[:3, :3] = self.initial_right_wrist_rot.as_matrix()  # Keep initial orientation
-        self.target_wrist_pose[:3, 3] = self.grasp_pos
+        self.target_wrist_pose[:3, :3] = self.initial_right_wrist_rot.as_matrix() # Keep initial orientation
+        self.target_wrist_pose[:3, 3] = target_pos
         
         # Get target fixture position if available
         if self.use_target_fixture and "target_fixture_pos" in self.observation:
@@ -455,11 +420,81 @@ class MotionPlanningPolicy(Policy):
         print(f"  Robot base pose: {base_pose}")
         print(f"  Object position (world): {obj_pos_world}")
         print(f"  Object position (robot): {obj_pos_robot}")
-        print(f"  Target position: {self.grasp_pos}")
+        print(f"  Target position: {target_pos}")
         print(f"  Duration: {self.trajectory_duration}s")
-        print(f"  Use target fixture: {self.use_target_fixture}")
+        print(f"  Use target fixture: {self.use_target_fixture}
+            matrix: 4x4 transformation matrix
+            
+        Returns:
+            7D vector [x, y, z, qw, qx, qy, qz]
+        """
+        pos = matrix[:3, 3]
+        rot = R.from_matrix(matrix[:3, :3])
+        # Get quaternion in [w, x, y, z] format
+        quat_xyzw = rot.as_quat()  # scipy returns [x, y, z, w]
+        quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+        return np.concatenate([pos, quat_wxyz])
 
-    def _update_task_stage(self):
+    def check_activation(self):
+        """Handle keyboard-based activation/deactivation."""
+        key = self.keyboard_listener.read_msg() if self.keyboard_listener else ""
+        toggle_activation_by_keyboard = key == "l"
+        reset_by_keyboard = key == "k"
+
+        if reset_by_keyboard:
+            print("Resetting motion planning policy")
+            self.reset()
+
+        if toggle_activation_by_keyboard:
+            self.is_active = not self.is_active
+            if self.is_active:
+                print("Starting motion planning policy")
+                if self.wait_for_activation > 0:
+                    print(f"Waiting {self.wait_for_activation} seconds before starting...")
+                    for i in range(self.wait_for_activation, 0, -1):
+                        print(f"Starting in {i}...")
+                        time_module.sleep(1)
+                print("Motion planning policy activated!")
+            else:
+                print("Stopping motion planning policy")
+                self.trajectory_start_time = None
+
+    def close(self) -> None:
+        """Clean up resources."""
+        pass
+
+    @contextmanager
+    def activate(self):
+        """Context manager for policy activation."""
+        try:
+            yield self
+        finally:
+            self.close()
+
+    def handle_keyboard_button(self, keycode):
+        """
+        Handle keyboard input for activation control.
+        
+        Args:
+            keycode: Keyboard key pressed
+                - "l": Toggle policy activation
+                - "k": Reset policy
+        """
+        if keycode == "l":
+            self.is_active = not self.is_active
+            if not self.is_active:
+                self.trajectory_start_time = None
+        if keycode == "k":
+            print("Resetting motion planning policy")
+            self.reset()
+
+    def activate_policy(self, wait_for_activation: int = 5):
+        """
+        Programmatically activate the motion planning policy.
+        
+        Args:
+            wait_for_activation: Seconds to wait before activation
+        _update_task_stage(self):
         """Update the task state machine based on elapsed time and completion criteria."""
         if self.stage_start_time is None:
             # First activation - initialize everything
@@ -510,8 +545,8 @@ class MotionPlanningPolicy(Policy):
         
         # Target is fixture position at the same Z as the object grasp
         # This keeps the gripper at a consistent height
-        target_pos = self.target_fixture_pos.copy() + self.release_offset
-        target_pos[2] = self.grasp_pos[2] + self.release_offset[2]
+        target_pos = self.target_fixture_pos.copy()
+        target_pos[2] = self.target_bottle_pos[2] + self.grasp_offset[2]
         
         self.target_wrist_pose = np.eye(4)
         self.target_wrist_pose[:3, :3] = self.initial_right_wrist_rot.as_matrix()
@@ -550,6 +585,11 @@ class MotionPlanningPolicy(Policy):
     
     def _update_gripper_state(self):
         """Update gripper joint positions based on current task stage."""
+        if self.closed_gripper_q is None:
+            # Initialize closed gripper configuration (simple approach: reduce all joint angles)
+            # This is a simplified model - adjust based on your actual gripper kinematics
+            self.closed_gripper_q = self.open_gripper_q * 0.3  # Close to 30% of open position
+        
         if self.current_stage == TaskStage.APPROACHING_OBJECT:
             # Keep gripper open
             self.current_right_hand_q = self.open_gripper_q.copy()
@@ -574,93 +614,6 @@ class MotionPlanningPolicy(Policy):
             # Keep gripper open
             self.current_right_hand_q = self.open_gripper_q.copy()
 
-    def _matrix_to_pose(self, matrix: np.ndarray) -> np.ndarray:
-        """
-        Convert 4x4 transformation matrix to pose vector.
-        
-        Args:
-            matrix: 4x4 transformation matrix
-            
-        Returns:
-            7D vector [x, y, z, qw, qx, qy, qz]
-        """
-        pos = matrix[:3, 3]
-        rot = R.from_matrix(matrix[:3, :3])
-        # Get quaternion in [w, x, y, z] format
-        quat_xyzw = rot.as_quat()  # scipy returns [x, y, z, w]
-        quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
-        return np.concatenate([pos, quat_wxyz])
-
-    def check_activation(self):
-        """Handle keyboard-based activation/deactivation."""
-        key = self.keyboard_listener.read_msg() if self.keyboard_listener else ""
-        toggle_activation_by_keyboard = key == "l"
-        reset_by_keyboard = key == "k"
-
-        if reset_by_keyboard:
-            print("Resetting motion planning policy")
-            self.reset()
-
-        if toggle_activation_by_keyboard:
-            self.is_active = not self.is_active
-            if self.is_active:
-                print("Starting motion planning policy")
-                if self.wait_for_activation > 0:
-                    print(f"Waiting {self.wait_for_activation} seconds before starting...")
-                    for i in range(self.wait_for_activation, 0, -1):
-                        print(f"Starting in {i}...")
-                        time_module.sleep(1)
-                print("Motion planning policy activated!")
-            else:
-                print("Stopping motion planning policy")
-                self.trajectory_start_time = None
-                self.stage_start_time = None
-
-    def close(self) -> None:
-        """Clean up resources."""
-        pass
-
-    @contextmanager
-    def activate(self):
-        """Context manager for policy activation."""
-        try:
-            yield self
-        finally:
-            self.close()
-
-    def handle_keyboard_button(self, keycode):
-        """
-        Handle keyboard input for activation control.
-        
-        Args:
-            keycode: Keyboard key pressed
-                - "l": Toggle policy activation
-                - "k": Reset policy
-        """
-        if keycode == "l":
-            self.is_active = not self.is_active
-            if not self.is_active:
-                self.trajectory_start_time = None
-                self.stage_start_time = None
-        if keycode == "k":
-            print("Resetting motion planning policy")
-            self.reset()
-
-    def activate_policy(self, wait_for_activation: int = 5):
-        """
-        Programmatically activate the motion planning policy.
-        
-        Args:
-            wait_for_activation: Seconds to wait before activation
-        """
-        self.is_active = True
-        if wait_for_activation > 0:
-            print(f"Waiting {wait_for_activation} seconds before starting...")
-            for i in range(self.wait_for_activation, 0, -1):
-                print(f"Starting in {i}...")
-                time_module.sleep(1)
-        print("Motion planning policy activated!")
-
     def reset(self, wait_for_activation: int = 5, auto_activate: bool = False):
         """
         Reset the motion planning policy to initial state.
@@ -675,7 +628,7 @@ class MotionPlanningPolicy(Policy):
         self.stage_start_time = None
         self.start_wrist_pose = None
         self.target_wrist_pose = None
-        self.grasp_pos = None
+        self.target_bottle_pos = None
         self.target_fixture_pos = None
         self.current_stage = TaskStage.APPROACHING_OBJECT
         self.use_target_fixture = False
@@ -691,7 +644,16 @@ class MotionPlanningPolicy(Policy):
         right_hand_indices = self.robot_model.get_hand_actuated_joint_indices(side="right")
         self.current_left_hand_q = self.robot_model.initial_body_pose[left_hand_indices].copy()
         self.current_right_hand_q = self.robot_model.initial_body_pose[right_hand_indices].copy()
-        self.open_gripper_q = self.current_right_hand_q.copy()
+        self.open_gripper_q = self.current_right_hand_q
+        self.latest_right_wrist_data = self.initial_right_wrist_pose.copy()
+        self.latest_left_fingers_data = {"position": np.ones((25, 4, 4))}
+        self.latest_right_fingers_data = {"position": np.ones((25, 4, 4))}
+        
+        # Reset stored hand positions to initial configuration (will be updated from observation)
+        left_hand_indices = self.robot_model.get_hand_actuated_joint_indices(side="left")
+        right_hand_indices = self.robot_model.get_hand_actuated_joint_indices(side="right")
+        self.current_left_hand_q = self.robot_model.initial_body_pose[left_hand_indices].copy()
+        self.current_right_hand_q = self.robot_model.initial_body_pose[right_hand_indices].copy()
 
         if auto_activate:
             self.activate_policy(wait_for_activation)

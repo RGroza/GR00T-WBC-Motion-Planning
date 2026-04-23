@@ -186,6 +186,8 @@ class G1Env(HumanoidEnv):
             obs["obj_pos"] = body_obs["obj_pos"]
         if "obj_quat" in body_obs:
             obs["obj_quat"] = body_obs["obj_quat"]
+        if "target_fixture_pos" in body_obs:
+            obs["target_fixture_pos"] = body_obs["target_fixture_pos"]
 
         # Store last observation for safety checking
         self.last_obs = obs

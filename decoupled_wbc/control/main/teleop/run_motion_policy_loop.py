@@ -60,7 +60,6 @@ def main(config: TeleopConfig):
         robot_model=robot_model,
         retargeting_ik=retargeting_ik,
         trajectory_duration=3.0,
-        grasp_offset=np.array([-0.05, -0.02, 0.1]),
         wait_for_activation=0,
         activate_keyboard_listener=True,
     )

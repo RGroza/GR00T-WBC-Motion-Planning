@@ -653,7 +653,7 @@ class PnPBottle(LocoManipulationEnv, DexMGConfigHelper):
     TABLE_GRADIENT: Gradient = Gradient(
         np.array([0.68, 0.34, 0.07, 1.0]), np.array([1.0, 1.0, 1.0, 1.0])
     )
-    DEFAULT_BOTTLE_POS: np.ndarray = np.array([0.4, 0, 0.77])
+    DEFAULT_BOTTLE_POS: np.ndarray = np.array([0.4, 0, 0.87])
     BOTTLE_POS_RANGE_X = (-0.08, 0.04)
     BOTTLE_POS_RANGE_Y = (-0.08, 0.08)
 
@@ -662,7 +662,7 @@ class PnPBottle(LocoManipulationEnv, DexMGConfigHelper):
         super().__init__(*args, **kwargs)
 
     def _load_model(self):
-        self.mujoco_objects = [self._create_table("table_body", [0.5, 0, 0], [0, 0, np.pi / 2])]
+        self.mujoco_objects = [self._create_table("table_body", [0.5, 0, 0.1], [0, 0, np.pi / 2])]
 
         super()._load_model()
 
@@ -1061,15 +1061,15 @@ class PnPBottleFixtureToFixture(PnPBottle):
     _TGT_NAME = "target_fixture"
     _FIXTURE_HALF_SIZE = np.array([0.05, 0.05, 0.001])
     _BOTTLE_HALF_HEIGHT = 0.075
-    _X_SRC_RANGE = (0.30, 0.55)
-    _X_TGT_RANGE = (0.30, 0.55)
-    _Y_SRC_RANGE = (-0.20, -0.05)
-    _Y_TGT_RANGE = (0.05, 0.20)
+    _X_SRC_RANGE = (0.20, 0.40)
+    _X_TGT_RANGE = (0.20, 0.40)
+    _Y_SRC_RANGE = (-0.10, 0.10)
+    _Y_TGT_RANGE = (-0.30, -0.10)
     _SRC_FIXTURE_VISIBLE = False
     _TGT_FIXTURE_VISIBLE = True
 
     def _load_model(self):
-        self.mujoco_objects = [self._create_table("table_body", [0.5, 0, 0], [0, 0, np.pi / 2])]
+        self.mujoco_objects = [self._create_table("table_body", [0.5, 0, 0.1], [0, 0, np.pi / 2])]
         LocoManipulationEnv._load_model(self)
         self.bottle = self._create_bottle()
         self._create_fixture(self._SRC_NAME, visible=self._SRC_FIXTURE_VISIBLE, rgb="1 0 0")
@@ -1144,7 +1144,7 @@ class PnPBottleFixtureToFixture(PnPBottle):
             self.sim.data.set_joint_qpos("bottle_joint", qpos)
 
             self._randomize_table_texture()
-            RobotPoseRandomizer.set_pose(self, (-0.3, -0.16), (-0.2, 0.2), (-np.pi / 6, np.pi / 6))
+            # RobotPoseRandomizer.set_pose(self, (-0.3, -0.16), (-0.2, 0.2), (-np.pi / 6, np.pi / 6))
 
     # --- distance via MuJoCo ---
     def _min_signed_distance_mj(self, geoms_a: list[str], geoms_b: list[str]) -> float:
@@ -1305,7 +1305,7 @@ class PnPBottleShelfToTable(PnPBottleFixtureToFixture):
     def _load_model(self):
         # Create both shelf and table
         self.mujoco_objects = [
-            self._create_table("table_body", [0.5, 0.6, 0], [0, 0, np.pi / 2]),
+            self._create_table("table_body", [0.5, 0.6, 0.1], [0, 0, np.pi / 2]),
             create_shelf(pos=[0.8, -0.4, 0], euler=[0, 0, np.pi / 2]),
         ]
 
@@ -1388,8 +1388,8 @@ class PnPBottleTableToTable(PnPBottle):
     def _load_model(self):
         # Create both the original table and the target table
         self.mujoco_objects = [
-            self._create_table("table_body", [0.5, 0, 0], [0, 0, np.pi / 2]),
-            self._create_table("target_table_body", [0.5, 1.2, 0], [0, 0, np.pi / 2]),
+            self._create_table("table_body", [0.5, 0, 0.1], [0, 0, np.pi / 2]),
+            self._create_table("target_table_body", [0.5, 1.2, 0.1], [0, 0, np.pi / 2]),
         ]
 
         LocoManipulationEnv._load_model(self)
@@ -1535,7 +1535,7 @@ class PickBottles(PnPBottle):
         return [f"bottle_{i}" for i in range(PickBottles.BOTTLES_COUNT)]
 
     def _load_model(self):
-        self.mujoco_objects = [self._create_table("table_body", [0.5, 0, 0], [0, 0, np.pi / 2])]
+        self.mujoco_objects = [self._create_table("table_body", [0.5, 0, 0.1], [0, 0, np.pi / 2])]
 
         LocoManipulationEnv._load_model(self)
 
@@ -1626,8 +1626,8 @@ class NavPickBottles(PickBottles):
 class PnPBottlesTableToTable(PickBottles):
     def _load_model(self):
         self.mujoco_objects = [
-            self._create_table("table_body", [0.5, 0, 0], [0, 0, np.pi / 2]),
-            self._create_table("target_table_body", [0.5, 1.2, 0], [0, 0, np.pi / 2]),
+            self._create_table("table_body", [0.5, 0, 0.1], [0, 0, np.pi / 2]),
+            self._create_table("target_table_body", [0.5, 1.2, 0.1], [0, 0, np.pi / 2]),
         ]
 
         LocoManipulationEnv._load_model(self)

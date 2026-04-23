@@ -101,6 +101,12 @@ class UnitreeSdk2Bridge:
         self.privileged_obs_puber = ChannelPublisher("rt/privileged_obs", OdoState_)
         self.privileged_obs_puber.Init()
         print("Initialized privileged obs publisher on: rt/privileged_obs")
+        
+        # Create publisher for target fixture position
+        self.target_fixture_obs_state = OdoState_default()
+        self.target_fixture_obs_puber = ChannelPublisher("rt/target_fixture_obs", OdoState_)
+        self.target_fixture_obs_puber.Init()
+        print("Initialized target fixture obs publisher on: rt/target_fixture_obs")
 
         self.low_cmd_suber = ChannelSubscriber("rt/lowcmd", LowCmd_)
         self.low_cmd_suber.Init(self.LowCmdHandler, 1)
@@ -241,6 +247,12 @@ class UnitreeSdk2Bridge:
             self.privileged_obs_state.orientation[:] = obs["obj_quat"]
             self.privileged_obs_state.tick = int(obs["time"] * 1e3)
             self.privileged_obs_puber.Write(self.privileged_obs_state)
+        
+        # Publish target fixture position if available
+        if "target_fixture_pos" in obs:
+            self.target_fixture_obs_state.position[:] = obs["target_fixture_pos"]
+            self.target_fixture_obs_state.tick = int(obs["time"] * 1e3)
+            self.target_fixture_obs_puber.Write(self.target_fixture_obs_state)
             # print(f"Published privileged obs: obj_pos={obs['obj_pos']}, obj_quat={obs['obj_quat']}")
 
     def GetAction(self) -> Tuple[np.ndarray, bool, bool]:
