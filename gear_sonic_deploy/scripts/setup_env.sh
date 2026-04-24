@@ -121,38 +121,47 @@ export CMAKE_PREFIX_PATH="$CMAKE_PATHS:$CMAKE_PREFIX_PATH"
 export OPENSSL_ROOT_DIR="/usr"
 
 # ROS2 Environment Setup - dynamically find ROS2 installation
-ROS2_FOUND=false
+# Respect pre-existing HAS_ROS2=0 setting (allows users to disable ROS2)
+if [ "$HAS_ROS2" = "0" ]; then
+    echo "⚠️  ROS2 disabled by user (HAS_ROS2=0)"
+    ROS2_FOUND=false
+else
+    ROS2_FOUND=false
 
-# Common ROS2 distributions in order of preference (newest first)
-ROS2_DISTROS=("jazzy" "iron" "humble" "galactic" "foxy" "eloquent" "dashing" "crystal")
-ROS2_INSTALL_PATHS=("/opt/ros" "/usr/local/ros" "$HOME/ros2_ws/install")
+    # Common ROS2 distributions in order of preference (newest first)
+    ROS2_DISTROS=("jazzy" "iron" "humble" "galactic" "foxy" "eloquent" "dashing" "crystal")
+    ROS2_INSTALL_PATHS=("/opt/ros" "/usr/local/ros" "$HOME/ros2_ws/install")
 
-for install_path in "${ROS2_INSTALL_PATHS[@]}"; do
-    if [ "$ROS2_FOUND" = true ]; then
-        break
-    fi
-    
-    for distro in "${ROS2_DISTROS[@]}"; do
-        ros2_setup_file="$install_path/$distro/setup.bash"
-        if [ -f "$ros2_setup_file" ]; then
-            source "$ros2_setup_file"
-            export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-            # Remove problematic system library path that conflicts with system GLIBC
-            export LD_LIBRARY_PATH=$(echo $LD_LIBRARY_PATH | tr ':' '\n' | grep -v "$SYSTEM_LIB_DIR" | tr '\n' ':' | sed 's/:$//')
-            echo "✅ ROS2 $distro found at $install_path/$distro - system manages all ROS2 dependencies"
-            export HAS_ROS2=1
-            export ROS_LOCALHOST_ONLY=1
-            ROS2_FOUND=true
+    for install_path in "${ROS2_INSTALL_PATHS[@]}"; do
+        if [ "$ROS2_FOUND" = true ]; then
             break
         fi
+        
+        for distro in "${ROS2_DISTROS[@]}"; do
+            ros2_setup_file="$install_path/$distro/setup.bash"
+            if [ -f "$ros2_setup_file" ]; then
+                source "$ros2_setup_file"
+                export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+                # Remove problematic system library path that conflicts with system GLIBC
+                export LD_LIBRARY_PATH=$(echo $LD_LIBRARY_PATH | tr ':' '\n' | grep -v "$SYSTEM_LIB_DIR" | tr '\n' ':' | sed 's/:$//')
+                echo "✅ ROS2 $distro found at $install_path/$distro - system manages all ROS2 dependencies"
+                export HAS_ROS2=1
+                export ROS_LOCALHOST_ONLY=1
+                ROS2_FOUND=true
+                break
+            fi
+        done
     done
-done
+fi
 
 if [ "$ROS2_FOUND" = false ]; then
-    echo "⚠️  ROS2 not found in common locations:"
-    printf "   %s/<distro>\n" "${ROS2_INSTALL_PATHS[@]}"
-    echo "   Install ROS2 system-wide for ROS2InputHandler support"
-    echo "   Building will continue without ROS2InputHandler"
+    # Only show warning if ROS2 wasn't explicitly disabled by user
+    if [ "$HAS_ROS2" != "0" ]; then
+        echo "⚠️  ROS2 not found in common locations:"
+        printf "   %s/<distro>\n" "${ROS2_INSTALL_PATHS[@]}"
+        echo "   Install ROS2 system-wide for ROS2InputHandler support"
+        echo "   Building will continue without ROS2InputHandler"
+    fi
     export HAS_ROS2=0
 fi
 

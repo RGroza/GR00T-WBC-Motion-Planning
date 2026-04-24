@@ -327,6 +327,7 @@ def main(config: DataCollectionLaunchConfig):
     deploy_mode = "sim" if config.sim else "real"
     deploy_cmd = (
         f"cd {repo_root / 'gear_sonic_deploy'} && "
+        f"export HAS_ROS2=0 && "
         f"./deploy.sh "
         f"--input-type {config.deploy_input_type} "
         f"--zmq-host {config.deploy_zmq_host} "
