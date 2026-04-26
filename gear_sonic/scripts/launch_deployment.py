@@ -155,6 +155,9 @@ class DeploymentLaunchConfig:
 
     action_publish_port: int = 5556
     """Port where bridge publishes actions for deployment to consume."""
+    
+    lang_prompt: str = "Walk forward"
+    """Language prompt / task description to send to GR00T (when using --use-bridge)."""
 
     # C++ deploy options
     deploy_checkpoint: str = ""
@@ -427,7 +430,8 @@ def main(config: DeploymentLaunchConfig):
             f"source .venv_data_collection/bin/activate && "
             f"python gear_sonic/scripts/groot_deployment_bridge.py "
             f"--groot-host {config.groot_host} "
-            f"--groot-port {config.groot_port}"
+            f"--groot-port {config.groot_port} "
+            f"--lang-prompt \"{config.lang_prompt}\""
         )
         print("Starting GR00T bridge (pane 1)...")
         _send_to_pane(1, bridge_cmd, wait=2.0)
